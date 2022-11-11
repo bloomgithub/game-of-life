@@ -1,5 +1,7 @@
 package gol
 
+import "fmt"
+
 type distributorChannels struct {
 	events     chan<- Event
 	ioCommand  chan<- ioCommand
@@ -13,9 +15,18 @@ type distributorChannels struct {
 func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
-	fileName := (string(p.ImageWidth) + "x" + string(p.ImageHeight) + ".pgm")
+
+	fileName := string(p.ImageWidth) + "x" + string(p.ImageHeight)
 	c.ioFilename <- fileName
-	
+
+	var world [][]uint8
+	row1 := make([]uint8, p.ImageWidth)
+	row2 := make([]uint8, p.ImageWidth)
+	world = append(world, row1)
+	world = append(world, row2)
+
+	fmt.Print(world)
+
 	turn := 0
 
 	// TODO: Execute all turns of the Game of Life.

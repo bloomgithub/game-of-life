@@ -13,10 +13,9 @@ type distributorChannels struct {
 func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
-	Image := <-c.ioInput
-	fileName := (string(p.ImageWidth) + "x" + string(p.ImageHeight))
+	fileName := (string(p.ImageWidth) + "x" + string(p.ImageHeight) + ".pgm")
 	c.ioFilename <- fileName
-
+	
 	turn := 0
 
 	// TODO: Execute all turns of the Game of Life.

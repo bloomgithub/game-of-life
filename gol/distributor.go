@@ -14,8 +14,8 @@ func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
 	Image := <-c.ioInput
-	Filename := <-c.ioFilename
-	world := [p.ImageWidth][p.ImageHeight]uint8
+	fileName := (string(p.ImageWidth) + "x" + string(p.ImageHeight))
+	c.ioFilename <- fileName
 
 	turn := 0
 

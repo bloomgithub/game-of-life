@@ -1,5 +1,10 @@
 package gol
 
+import (
+	"fmt"
+	"strconv"
+)
+
 type distributorChannels struct {
 	events     chan<- Event
 	ioCommand  chan<- ioCommand
@@ -14,20 +19,32 @@ func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
 
-	// workout filename from the parameters coming in
-	fileName := string(p.ImageWidth) + "x" + string(p.ImageHeight)
+	// filename from the parameters
+	fileName := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
-	//send filename down appropriate channel
+	//send command
+	c.ioCommand <- ioInput
+
+	//send filename
 	c.ioFilename <- fileName
 
-	//create 2D slice to store the image
-	var world [][]uint8
-	row1 := make([]uint8, p.ImageWidth)
-	row2 := make([]uint8, p.ImageWidth)
-	world = append(world, row1)
-	world = append(world, row2)
+	//create 2D slice to store the world
+	world := make([][]byte, p.ImageHeight)
+	for i := range world {
+		world[i] = make([]byte, p.ImageWidth)
+	}
+
+	//get image byte by byte and store in 2D world
+	for y := 0; y < p.ImageHeight; y++ {
+		for x := 0; x < p.ImageWidth; x++ {
+			number := <-c.ioInput
+			world[y][x] = number
+		}
+	}
 
 	turn := 0
+
+	fmt.Println(p.Turns)
 
 	// TODO: Execute all turns of the Game of Life.
 

@@ -15,16 +15,11 @@ type distributorChannels struct {
 func distributor(p Params, c distributorChannels) {
 
 	// TODO: Create a 2D slice to store the world.
-<<<<<<< HEAD
 
-	fileName := string(p.ImageWidth) + "x" + string(p.ImageHeight) + "pgm"
-=======
-	
 	// workout filename from the parameters coming in
-	fileName := string(p.ImageWidth) + "x" + string(p.ImageHeight)
+	fileName := string(p.ImageWidth) + "x" + string(p.ImageHeight) + "pgm"
 
 	//send filename down appropriate channel
->>>>>>> 9b27a3ee516533aac401df329e18d403669e7d27
 	c.ioFilename <- fileName
 
 	//create 2D slice to store the image

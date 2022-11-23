@@ -1,6 +1,7 @@
 package gol
 
 import (
+    "fmt"
     "strconv"
     "uk.ac.bris.cs/gameoflife/util"
 )
@@ -17,38 +18,38 @@ type distributorChannels struct {
 // distributor divides the work between workers and interacts with other goroutines.
 
 type World struct {
-    bytes [][]uint8
+    field [][]uint8
     w, h int
 }
 
 func NewWorld(w, h int,  c distributorChannels) *World {
-    bytes := make([][]uint8, h)
-    for i := range bytes {
-        bytes[i] = make([]uint8, w)
+    field := make([][]uint8, h)
+    for i := range field {
+        field[i] = make([]uint8, w)
     }
-    for y := 0; y < w; y++ {
-        for x := 0; x < h; x++ {
+    for row := 0; row < w; row++ {
+        for column := 0; column < h; column++ {
             number := <-c.ioInput
-            bytes[y][x] = number
+            field[row][column] = number
         }
     }
     return &World{
-        bytes: bytes,
+        field: field,
         w: w, h: h,
         }
 }
 
-func (f *World) CountAliveNeigbours(x, y int) int {
+func (f *World) CountAliveNeigbours(row, column int) int {
     aliveNeighbours := 0
     for i := -1; i <= 1; i++ {
         for j := -1; j <= 1; j++ {
-            x:=x+i
-            y:=y+j
-            x += f.w
-            x %= f.w
-            y += f.h
-            y %= f.h
-            if (j != 0 || i != 0) && f.bytes[y][x] == 255 {
+            row:=row+i
+            column:=column+j
+            row += f.w
+            row %= f.w
+            column += f.h
+            column %= f.h
+            if (j != 0 || i != 0) && f.field[row][column] == 255 {
                 aliveNeighbours++
             }
         }
@@ -61,28 +62,45 @@ func (world *World) Turn() {
     for i := range buffer {
         buffer[i] = make([]uint8, world.w)
     }
-    for y := 0; y < world.h; y++ {
-        for x := 0; x < world.w; x++ {
-            alive:=world.CountAliveNeigbours(x, y)
+    for row := 0; row < world.h; row++ {
+        for column := 0; column < world.w; column++ {
+            alive:=world.CountAliveNeigbours(row, column)
             // any live cell with fewer than two live neighbours dies
             if (alive < 2) {
-                buffer[y][x] = byte(0)
+                buffer[row][column] = byte(0)
             }
             // any live cell with two or three live neighbours is unaffected
             if (alive == 2 || alive == 3) {
-                buffer[y][x] = world.bytes[y][x]
+                buffer[row][column] = world.field[row][column]
             }
             // any live cell with more than three live neighbours dies
             if (alive > 3) {
-                buffer[y][x] = byte(0)
+                buffer[row][column] = byte(0)
             }
             // any dead cell with exactly three live neighbours becomes alive
             if (alive == 3) {
-                buffer[y][x] = byte(255)
+                buffer[row][column] = byte(255)
             }
         }
     }
-    world.bytes = buffer
+    world.field = buffer
+}
+
+func (world *World) Partition(w, h, t int) []*World {
+    var divided []*World
+
+    chunkSize := (len(world.field) + t - 1) / t
+
+    for i := 0; i < len(world.field); i += chunkSize {
+        end := i + chunkSize
+
+        if end > len(world.field) {
+            end = len(world.field)
+        }
+
+        divided = append(divided, &World{field: world.field[i:end], w: w, h: h,})
+    }
+    return divided
 }
 
 func distributor(p Params, c distributorChannels) {
@@ -97,16 +115,19 @@ func distributor(p Params, c distributorChannels) {
 
     turn := 0
 
+    parts:=world.Partition(p.ImageWidth, p.ImageHeight, p.Threads)
+    fmt.Println(len(parts))
+
     for i := 0; i < p.Turns; i++ {
         world.Turn()
         turn++
     }
 
     ac := []util.Cell{}
-    for y := 0; y < p.ImageHeight; y++ {
-        for x := 0; x < p.ImageWidth; x++ {
-            if (world.bytes[y][x] == byte(255)) {
-                ac = append(ac, util.Cell{X: x, Y: y})
+    for row := 0; row < p.ImageHeight; row++ {
+        for column := 0; column < p.ImageWidth; column++ {
+            if (world.field[row][column] == byte(255)) {
+                ac = append(ac, util.Cell{X: column, Y: row})
             }
         }
     }

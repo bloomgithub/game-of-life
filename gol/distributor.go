@@ -16,83 +16,69 @@ type distributorChannels struct {
 
 // distributor divides the work between workers and interacts with other goroutines.
 
-type Matrix struct {
+type World struct {
     bytes [][]uint8
     w, h int
 }
 
-type World struct {
-    bytes *Matrix
-    w, h int
-}
-
-func NewMatrix(w, h int) *Matrix {
+func NewWorld(w, h int,  c distributorChannels) *World {
     bytes := make([][]uint8, h)
     for i := range bytes {
         bytes[i] = make([]uint8, w)
     }
-
-    return &Matrix{bytes: bytes, w: w, h: h}
-}
-
-func (f *Matrix) Set(x, y int, b uint8) {
-    f.bytes[y][x] = b
-}
-
-func NewWorld(w, h int,  c distributorChannels) *World {
-    actual := NewMatrix(w, h)
     for y := 0; y < w; y++ {
         for x := 0; x < h; x++ {
             number := <-c.ioInput
-            actual.Set(y, x, number)
+            bytes[y][x] = number
         }
     }
     return &World{
-        bytes: actual,
+        bytes: bytes,
         w: w, h: h,
         }
 }
 
-func (f *Matrix) Alive(x, y int) bool {
-    x += f.w
-    x %= f.w
-    y += f.h
-    y %= f.h
-    return f.bytes[y][x] == 255
-}
-
-func (f *Matrix) CountAliveNeigbours(x, y int) int {
-    alive := 0
+func (f *World) CountAliveNeigbours(x, y int) int {
+    aliveNeighbours := 0
     for i := -1; i <= 1; i++ {
         for j := -1; j <= 1; j++ {
-            if (j != 0 || i != 0) && f.Alive(x+i, y+j) {
-                alive++
+            x:=x+i
+            y:=y+j
+            x += f.w
+            x %= f.w
+            y += f.h
+            y %= f.h
+            if (j != 0 || i != 0) && f.bytes[y][x] == 255 {
+                aliveNeighbours++
             }
         }
     }
-    return alive
+    return aliveNeighbours
 }
 
-func (world *World) Step(w,h int) {
-    buffer:=NewMatrix(w,h)
+func (world *World) Turn() {
+    buffer := make([][]uint8, world.h)
+    for i := range buffer {
+        buffer[i] = make([]uint8, world.w)
+    }
     for y := 0; y < world.h; y++ {
         for x := 0; x < world.w; x++ {
-            alive:=world.bytes.CountAliveNeigbours(x, y)
+            alive:=world.CountAliveNeigbours(x, y)
             // any live cell with fewer than two live neighbours dies
             if (alive < 2) {
-                buffer.Set(x, y, byte(0))
+                buffer[y][x] = byte(0)
             }
             // any live cell with two or three live neighbours is unaffected
             if (alive == 2 || alive == 3) {
-                buffer.Set(x, y, world.bytes.bytes[y][x])
+                buffer[y][x] = world.bytes[y][x]
             }
             // any live cell with more than three live neighbours dies
             if (alive > 3) {
-                buffer.Set(x, y, byte(0))
+                buffer[y][x] = byte(0)
             }
             // any dead cell with exactly three live neighbours becomes alive
             if (alive == 3) {
-                buffer.Set(x, y, byte(255))
+                buffer[y][x] = byte(255)
             }
         }
     }
@@ -107,22 +93,20 @@ func distributor(p Params, c distributorChannels) {
 
     c.ioFilename <- fileName
 
-    w:=p.ImageWidth
-    h:=p.ImageHeight
-    world := NewWorld(w, h, c)
+    world := NewWorld(p.ImageWidth, p.ImageHeight, c)
 
     turn := 0
 
     for i := 0; i < p.Turns; i++ {
-        world.Step(w,h)
+        world.Turn()
         turn++
     }
 
     ac := []util.Cell{}
     for y := 0; y < p.ImageHeight; y++ {
         for x := 0; x < p.ImageWidth; x++ {
-            if (world.bytes.bytes[y][x] == byte(255)) {
-                ac = append(ac, util.Cell{X: y, Y: x})
+            if (world.bytes[y][x] == byte(255)) {
+                ac = append(ac, util.Cell{X: x, Y: y})
             }
         }
     }
@@ -130,18 +114,18 @@ func distributor(p Params, c distributorChannels) {
     f := FinalTurnComplete{
         CompletedTurns: turn,
         Alive: ac,
-    }
+        }
 
-    c.events <- f
+        c.events <- f
 
-    // TODO: Report the final state using FinalTurnCompleteEvent.
+        // TODO: Report the final state using FinalTurnCompleteEvent.
 
-    // Make sure that the Io has finished any output before exiting.
-    c.ioCommand <- ioCheckIdle
-    <-c.ioIdle
+        // Make sure that the Io has finished any output before exiting.
+        c.ioCommand <- ioCheckIdle
+        <-c.ioIdle
 
-    c.events <- StateChange{turn, Quitting}
+        c.events <- StateChange{turn, Quitting}
 
-    // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-    close(c.events)
+        // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+        close(c.events)
 }

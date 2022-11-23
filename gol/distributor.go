@@ -134,7 +134,6 @@ func distributor(p Params, c distributorChannels) {
 
     c.events <- f
 
-
 	// TODO: Report the final state using FinalTurnCompleteEvent.
 
 	// Make sure that the Io has finished any output before exiting.

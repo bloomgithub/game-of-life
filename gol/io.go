@@ -118,7 +118,6 @@ func (io *ioState) readPgmImage() {
 	}
 
 	image := []byte(fields[4])
-	fmt.Println(image)
 
 	for _, b := range image {
 		io.channels.input <- b

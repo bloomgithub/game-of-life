@@ -22,7 +22,7 @@ type Matrix struct {
 }
 
 type World struct {
-    actual, buffer *Matrix
+    bytes *Matrix
     w, h int
 }
 
@@ -48,7 +48,7 @@ func NewWorld(w, h int,  c distributorChannels) *World {
         }
     }
     return &World{
-        actual: actual, buffer: NewMatrix(w, h),
+        bytes: actual,
         w: w, h: h,
         }
 }
@@ -73,29 +73,30 @@ func (f *Matrix) CountAliveNeigbours(x, y int) int {
     return alive
 }
 
-func (world *World) Step() {
+func (world *World) Step(w,h int) {
+    buffer:=NewMatrix(w,h)
     for y := 0; y < world.h; y++ {
         for x := 0; x < world.w; x++ {
-            alive:=world.actual.CountAliveNeigbours(x, y)
+            alive:=world.bytes.CountAliveNeigbours(x, y)
             // any live cell with fewer than two live neighbours dies
             if (alive < 2) {
-                world.buffer.Set(x, y, byte(0))
+                buffer.Set(x, y, byte(0))
             }
             // any live cell with two or three live neighbours is unaffected
             if (alive == 2 || alive == 3) {
-                world.buffer.Set(x, y, world.actual.bytes[y][x])
+                buffer.Set(x, y, world.bytes.bytes[y][x])
             }
             // any live cell with more than three live neighbours dies
             if (alive > 3) {
-                world.buffer.Set(x, y, byte(0))
+                buffer.Set(x, y, byte(0))
             }
             // any dead cell with exactly three live neighbours becomes alive
             if (alive == 3) {
-                world.buffer.Set(x, y, byte(255))
+                buffer.Set(x, y, byte(255))
             }
         }
     }
-    world.actual, world.buffer = world.buffer, world.actual
+    world.bytes = buffer
 }
 
 func distributor(p Params, c distributorChannels) {
@@ -113,14 +114,14 @@ func distributor(p Params, c distributorChannels) {
     turn := 0
 
     for i := 0; i < p.Turns; i++ {
-        world.Step()
+        world.Step(w,h)
         turn++
     }
 
     ac := []util.Cell{}
     for y := 0; y < p.ImageHeight; y++ {
         for x := 0; x < p.ImageWidth; x++ {
-            if (world.actual.bytes[y][x] == byte(255)) {
+            if (world.bytes.bytes[y][x] == byte(255)) {
                 ac = append(ac, util.Cell{X: y, Y: x})
             }
         }

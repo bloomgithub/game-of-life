@@ -1,7 +1,6 @@
 package gol
 
 import (
-    "fmt"
     "strconv"
     "uk.ac.bris.cs/gameoflife/util"
 )

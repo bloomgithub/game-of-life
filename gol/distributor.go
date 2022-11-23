@@ -86,23 +86,6 @@ func (world *World) Turn() {
     world.field = buffer
 }
 
-func (world *World) Partition(w, h, t int) []*World {
-    var divided []*World
-
-    chunkSize := (len(world.field) + t - 1) / t
-
-    for i := 0; i < len(world.field); i += chunkSize {
-        end := i + chunkSize
-
-        if end > len(world.field) {
-            end = len(world.field)
-        }
-
-        divided = append(divided, &World{field: world.field[i:end], w: w, h: h,})
-    }
-    return divided
-}
-
 func distributor(p Params, c distributorChannels) {
 
     fileName := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
@@ -115,8 +98,6 @@ func distributor(p Params, c distributorChannels) {
 
     turn := 0
 
-    parts:=world.Partition(p.ImageWidth, p.ImageHeight, p.Threads)
-    fmt.Println(len(parts))
 
     for i := 0; i < p.Turns; i++ {
         world.Turn()

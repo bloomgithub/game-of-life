@@ -1,6 +1,7 @@
 package gol
 
 import (
+    "time"
     "strconv"
     "uk.ac.bris.cs/gameoflife/util"
 )
@@ -16,117 +17,180 @@ type distributorChannels struct {
 
 // distributor divides the work between workers and interacts with other goroutines.
 
-type World struct {
-    field [][]uint8
+// Field represents a 2D field of pixels
+type Field struct {
+    slice [][]uint8
     w, h int
 }
 
-func NewWorld(w, h int,  c distributorChannels) *World {
-    field := make([][]uint8, h)
-    for i := range field {
-        field[i] = make([]uint8, w)
-    }
-    for row := 0; row < w; row++ {
-        for column := 0; column < h; column++ {
-            number := <-c.ioInput
-            field[row][column] = number
-        }
-    }
-    return &World{
-        field: field,
-        w: w, h: h,
-        }
+type World struct {
+    field Field
+    steps []Step
 }
 
-func (f *World) CountAliveNeigbours(row, column int) int {
-    aliveNeighbours := 0
+type Result struct {
+    field Field
+    step Step
+}
+
+type Step struct {
+    start, end int
+}
+
+// NewField returns an empty field of the specified width and height.
+func NewField(w, h int) Field {
+    slice := make([][]uint8, h)
+    for i := range slice {
+        slice[i] = make([]uint8, w)
+    }
+    return Field{slice: slice, w: w, h: h}
+}
+
+// Change changes the state of the specified pixel to the given value.
+func (field Field) Change(x, y int, b uint8) {
+    field.slice[y][x] = b
+}
+
+// Alive reports whether the specified pixel is alive.
+// If the x or y coordinates are outside the field boundaries they are wrapped
+// toroidally. For instance, an x value of -1 is treated as width-1.
+func (field Field) Alive(x, y int) bool {
+    x += field.w
+    x %= field.w
+    y += field.h
+    y %= field.h
+    return field.slice[y][x] == 255
+}
+
+// Neighbours returns the number of alive neighbours of specified pixel
+func (field Field) Neighbours(x, y int) int {
+    n := 0
     for i := -1; i <= 1; i++ {
         for j := -1; j <= 1; j++ {
-            row:=row+i
-            column:=column+j
-            row += f.w
-            row %= f.w
-            column += f.h
-            column %= f.h
-            if (j != 0 || i != 0) && f.field[row][column] == 255 {
-                aliveNeighbours++
+            if (j != 0 || i != 0) && field.Alive(x+i, y+j) {
+                n++
             }
         }
     }
-    return aliveNeighbours
+    return n
 }
 
-func (world *World) Turn() {
-    buffer := make([][]uint8, world.h)
-    for i := range buffer {
-        buffer[i] = make([]uint8, world.w)
+// Next returns the state of the specified pixel at the next time step.
+func (field Field) Next(x, y int) uint8 {
+    buffer := field.slice[y][x]
+    n := field.Neighbours(x, y)
+    if (n < 2) || (n > 3) {
+        buffer = byte(0)
+    };
+    if (n == 3) {
+        buffer = byte(255)
     }
-    for row := 0; row < world.h; row++ {
-        for column := 0; column < world.w; column++ {
-            alive:=world.CountAliveNeigbours(row, column)
-            // any live cell with fewer than two live neighbours dies
-            if (alive < 2) {
-                buffer[row][column] = byte(0)
-            }
-            // any live cell with two or three live neighbours is unaffected
-            if (alive == 2 || alive == 3) {
-                buffer[row][column] = world.field[row][column]
-            }
-            // any live cell with more than three live neighbours dies
-            if (alive > 3) {
-                buffer[row][column] = byte(0)
-            }
-            // any dead cell with exactly three live neighbours becomes alive
-            if (alive == 3) {
-                buffer[row][column] = byte(255)
-            }
+    return buffer
+}
+
+// NewWorld returns a new World game state with specified initial state.
+func NewWorld(w, h, t int, c distributorChannels) World {
+    field := NewField(w, h)
+    for y := 0; y < h; y++ {
+        for x := 0; x < w; x++ {
+            number := <-c.ioInput
+            field.slice[y][x] = number
         }
     }
-    world.field = buffer
+    step := (h + t - 1) / t;
+    steps := []Step{};
+    for start := 0; start < h; start += step {
+        end := start + step
+        if end > h {
+            end = h
+        }
+        steps = append(steps, Step{start: start, end: end})
+    };
+    return World{field: field, steps: steps}
+}
+
+// Step advances the game by one instant, recomputing and updating all cells.
+func (world World) Step(steps <-chan Step, result chan<- Result) {
+    for step := range steps {
+        buffer := NewField(world.field.w, world.field.h)
+        for y := step.start; y < step.end; y++ {
+            for x := 0; x < world.field.w; x++ {
+                n := world.field.Next(x, y)
+                buffer.Change(x, y, n)
+            }
+        }
+        time.Sleep(time.Millisecond)
+        result <- Result{
+            field: buffer,
+            step: Step{start: step.start, end: step.end},
+        }
+    }
 }
 
 func distributor(p Params, c distributorChannels) {
 
-    fileName := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+    fileName := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight);
 
-    c.ioCommand <- ioInput
+    c.ioCommand <- ioInput;
 
-    c.ioFilename <- fileName
+    c.ioFilename <- fileName;
 
-    world := NewWorld(p.ImageWidth, p.ImageHeight, c)
+    // TODO: Create a 2D slice to store the world.
 
-    turn := 0
+    world := NewWorld(p.ImageHeight, p.ImageWidth, p.Threads, c);
 
+    turn := 0;
+
+    // TODO: Execute all turns of the Game of Life.
 
     for i := 0; i < p.Turns; i++ {
-        world.Turn()
+        steps := make(chan Step)
+        result := make(chan Result)
+
+        for worker := 1; worker <= len(world.steps); worker++ {
+            go world.Step(steps, result)
+        };
+
+        for _, step := range world.steps {
+            steps <- step
+        }
+        close(steps)
+
+        results := []Result{}
+        for a := 1; a <= len(world.steps); a++ {
+            buffer := <-result
+            results = append(results, buffer)
+        };
+
+        for _, field := range results {
+            for row := field.step.start; row < field.step.end; row++ {
+                world.field.slice[row] = field.field.slice[row]
+            }
+        }
         turn++
     }
 
-    ac := []util.Cell{}
-    for row := 0; row < p.ImageHeight; row++ {
-        for column := 0; column < p.ImageWidth; column++ {
-            if (world.field[row][column] == byte(255)) {
-                ac = append(ac, util.Cell{X: column, Y: row})
+    // TODO: Report the final state using FinalTurnCompleteEvent.
+
+    a := []util.Cell{}
+    for y := 0; y < world.field.h; y++ {
+        for x := 0; x < world.field.w; x++ {
+            if world.field.Alive(x, y) {
+                a = append(a, util.Cell{X: x, Y: y})
             }
         }
-    }
+    };
 
-    f := FinalTurnComplete{
+    c.events <- FinalTurnComplete{
         CompletedTurns: turn,
-        Alive: ac,
-        }
+        Alive: a}
 
-        c.events <- f
+    // Make sure that the Io has finished any output before exiting.
+    c.ioCommand <- ioCheckIdle
+    <-c.ioIdle
 
-        // TODO: Report the final state using FinalTurnCompleteEvent.
+    c.events <- StateChange{turn, Quitting}
 
-        // Make sure that the Io has finished any output before exiting.
-        c.ioCommand <- ioCheckIdle
-        <-c.ioIdle
-
-        c.events <- StateChange{turn, Quitting}
-
-        // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-        close(c.events)
+    // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+    close(c.events)
 }

@@ -1,7 +1,6 @@
 package gol
 
 import (
-    "fmt"
 	"strconv"
 	"time"
 	"uk.ac.bris.cs/gameoflife/util"
@@ -240,7 +239,6 @@ func keyHandling(k <-chan rune, c distributorChannels, world World, p Params) {
 		key := <-k
 		switch key {
 		case 's':
-            fmt.Println("h")
 			sendOutput(c, world, p)
 		case 'q':
 			sendOutput(c, world, p)

@@ -29,9 +29,10 @@ type ioCommand uint8
 
 // This is a way of creating enums in Go.
 // It will evaluate to:
-//		ioOutput 	= 0
-//		ioInput 	= 1
-//		ioCheckIdle = 2
+//
+//	ioOutput 	= 0
+//	ioInput 	= 1
+//	ioCheckIdle = 2
 const (
 	ioOutput ioCommand = iota
 	ioInput
@@ -126,8 +127,7 @@ func (io *ioState) readPgmImage() {
 }
 
 // startIo should be the entrypoint of the io goroutine.
-func startIo(p Params, c ioChannels)
-{
+func startIo(p Params, c ioChannels) {
 	io := ioState{
 		params:   p,
 		channels: c,

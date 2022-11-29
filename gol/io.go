@@ -127,7 +127,8 @@ func (io *ioState) readPgmImage() {
 }
 
 // startIo should be the entrypoint of the io goroutine.
-func startIo(p Params, c ioChannels) {
+func startIo(p Params, c ioChannels)
+{
 	io := ioState{
 		params:   p,
 		channels: c,

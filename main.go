@@ -35,7 +35,7 @@ func main() {
 	flag.IntVar(
 		&params.Turns,
 		"turns",
-		10000000000,
+        10000000000,
 		"Specify the number of turns to process. Defaults to 10000000000.")
 
 	noVis := flag.Bool(

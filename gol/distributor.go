@@ -243,11 +243,11 @@ func (world *World) handler(turns int, wg *sync.WaitGroup, c distributorChannels
 
 func distributor(p Params, c distributorChannels) {
 
-	inFilename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
+    inFilename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
-	c.ioCommand <- ioInput;
+    c.ioCommand <- ioInput;
 
-	c.ioFilename <- inFilename;
+    c.ioFilename <- inFilename;
 
     world := create(p.ImageHeight, p.ImageWidth, p.Threads, c)
 
@@ -268,13 +268,14 @@ func distributor(p Params, c distributorChannels) {
 
     world.output(c)
 
-	// Make sure that the Io has finished any output before exiting.
-	c.ioCommand <- ioCheckIdle
-	<-c.ioIdle
+    // Make sure that the Io has finished any output before exiting.
+    c.ioCommand <- ioCheckIdle
+    <-c.ioIdle
 
     c.events <- StateChange{completedTurns, Quitting}
 
-	// Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
-	close(c.events)
+    // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
+    close(c.events)
+    close(c.keyPresses)
 
 }

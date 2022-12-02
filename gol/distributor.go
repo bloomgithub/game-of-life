@@ -242,7 +242,6 @@ func (world *World) handler(turns int, wg *sync.WaitGroup, c distributorChannels
 }
 
 func distributor(p Params, c distributorChannels) {
-
     inFilename := strconv.Itoa(p.ImageWidth) + "x" + strconv.Itoa(p.ImageHeight)
 
     c.ioCommand <- ioInput;
@@ -276,6 +275,5 @@ func distributor(p Params, c distributorChannels) {
 
     // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
     close(c.events)
-    close(c.keyPresses)
 
 }

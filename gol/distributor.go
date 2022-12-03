@@ -240,7 +240,6 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
 func distributor(p Params, c distributorChannels) {
     world := loadWorld(p.ImageHeight, p.ImageWidth, p.Threads, c)
 
-
     var wg sync.WaitGroup
 
     wg.Add(1);

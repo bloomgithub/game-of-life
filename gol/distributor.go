@@ -21,7 +21,7 @@ type distributorChannels struct {
 // distributor divides the work between workers and interacts with other goroutines.
 
 type World struct {
-	field [][]bool
+	field [][]uint8
     steps []Step
 	height, width, threads int
 }
@@ -37,10 +37,10 @@ type Alive struct {
 
 var completedTurns = 0;
 
-func newField(height, width int) [][]bool {
-    field := make([][]bool, height)
+func newField(height, width int) [][]uint8 {
+    field := make([][]uint8, height)
     for i := range field {
-        field[i] = make([]bool, width)
+        field[i] = make([]uint8, width)
     };
     return field
 }
@@ -71,9 +71,8 @@ func loadWorld(height, width, threads int, c distributorChannels) *World {
     for y := 0; y < height; y++ {
         for x := 0; x < width; x++ {
             p := <-c.ioInput;
-            b := p == 255
-            field[y][x] = b
-            if b {c.events <- CellFlipped{0, util.Cell{X: x, Y: y}}}
+            field[y][x] = p
+            if p == 255 {c.events <- CellFlipped{0, util.Cell{X: x, Y: y}}}
         }
     };
     steps := newSteps(height, threads);
@@ -81,7 +80,7 @@ func loadWorld(height, width, threads int, c distributorChannels) *World {
     return &World{field: field, steps: steps, height: height, width: width, threads: threads, }
 }
 
-func (world *World) updateRegion(start, end int, regionCh chan<- [][]bool, flippedCh chan<- []util.Cell) {
+func (world *World) updateRegion(start, end int, regionCh chan<- [][]uint8, flippedCh chan<- []util.Cell) {
     region := newField(end-start, world.width)
     flipped := []util.Cell{}
     for y := start; y < end; y++ {
@@ -97,16 +96,16 @@ func (world *World) updateRegion(start, end int, regionCh chan<- [][]bool, flipp
                     tx %= world.width
                     ty += world.height
                     ty %= world.height
-        			if (j != 0 || i != 0) && world.field[ty][tx] {
+        			if (j != 0 || i != 0) && world.field[ty][tx] == 255 {
                         aliveNeighbours++
         			}
         		}
             }
             if (aliveNeighbours < 2) || (aliveNeighbours > 3) {
-                nextCell = false
+                nextCell = 0
         	}
             if aliveNeighbours == 3 {
-                nextCell = true
+                nextCell = 255
             }
             if nextCell != currentCell {
                 flipped = append(flipped, util.Cell{x,y})
@@ -119,11 +118,11 @@ func (world *World) updateRegion(start, end int, regionCh chan<- [][]bool, flipp
 }
 
 func (world *World) updateWorld(turn int, c distributorChannels) {
-    var newFieldData [][]bool
+    var newFieldData [][]uint8
 
-    regionCh := make([]chan [][]bool, world.threads);
+    regionCh := make([]chan [][]uint8, world.threads);
     for i := range regionCh {
-        regionCh[i] = make(chan [][]bool)
+        regionCh[i] = make(chan [][]uint8)
     }
 
     flippedCh := make(chan []util.Cell)
@@ -158,7 +157,7 @@ func (world *World) getAlive() *Alive {
     count := 0;
     for y := 0; y < world.height; y++ {
         for x := 0; x < world.width; x++ {
-            if world.field[y][x] {
+            if world.field[y][x] == 255 {
                 cells = append(cells, util.Cell{X: x, Y: y})
                 count++
             }
@@ -191,11 +190,7 @@ func (world *World) saveWorld(turn int, c distributorChannels) {
 
     for y := 0; y < world.height; y++ {
         for x := 0; x < world.width; x++ {
-            out := byte(0)
-            if world.field[y][x]{
-                out = byte(255)
-            }
-            c.ioOutput <- out
+            c.ioOutput <- world.field[y][x]
         }
     };
 

@@ -54,25 +54,6 @@ func countingBroker(stopBrokerCh <-chan bool) {
     }
 }
 
-func reportAlive(stopReporterCh <-chan bool, c distributorChannels) {
-    ticker := time.NewTicker(2 * time.Second)
-
-    for {
-        select {
-            case <-ticker.C:
-                completedTurns := <- getCompletedTurnsCh
-                cellsCount := <- getCellsCountCh
-                c.events <- AliveCellsCount{
-                    CompletedTurns: completedTurns,
-                    CellsCount: cellsCount,
-                }
-            case <- stopReporterCh:
-                ticker.Stop();
-                return
-        }
-    }
-}
-
 func newField(height, width int) [][]uint8 {
     field := make([][]uint8, height)
     for i := range field {
@@ -232,6 +213,25 @@ func loadWorld(height, width, threads int, c distributorChannels) *World {
     return &World{field: field, height: height, width: width, threads: threads, }
 }
 
+func reportAlive(stopReporterCh <-chan bool, c distributorChannels) {
+    ticker := time.NewTicker(2 * time.Second)
+
+    for {
+        select {
+            case <-ticker.C:
+                completedTurns := <- getCompletedTurnsCh
+                cellsCount := <- getCellsCountCh
+                c.events <- AliveCellsCount{
+                    CompletedTurns: completedTurns,
+                    CellsCount: cellsCount,
+                }
+            case <- stopReporterCh:
+                ticker.Stop();
+                return
+        }
+    }
+}
+
 func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChannels) {
     defer wg.Done()
     paused := false
@@ -275,7 +275,6 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
                     }
         }
     }
-    world.saveWorld(turn, c)
 }
 
 func distributor(p Params, c distributorChannels) {
@@ -305,6 +304,8 @@ func distributor(p Params, c distributorChannels) {
         CompletedTurns: completedTurns,
         Alive: world.getAlive(),
     }
+
+    world.saveWorld(completedTurns, c)
 
     // Make sure that the Io has finished any output before exiting.
     c.ioCommand <- ioCheckIdle

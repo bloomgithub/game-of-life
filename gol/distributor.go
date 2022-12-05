@@ -19,42 +19,56 @@ type distributorChannels struct {
     keyPresses <-chan rune
 }
 
-// distributor divides the work between workers and interacts with other goroutines.
+var setCompletedTurnsCh = make(chan bool)
+
+var getCompletedTurnsCh = make(chan int)
+
+var setCellsCountCh = make(chan int)
+
+var getCellsCountCh = make(chan int)
 
 type World struct {
 	field [][]uint8
-    steps []Step
 	height, width, threads int
 }
 
-type Step struct {
-    start, end int
+type Region struct {
+    field [][]uint8
+    start, end, height, width int
 }
 
-type Alive struct {
-    cells []util.Cell
-    count int
-}
-
-var setTurnsCh = make(chan bool)
-
-var getTurnsCh =make(chan int)
-
-var setCountCh = make(chan int)
-
-var getCountCh = make(chan int)
-
-func countingBroker(inCount int) {
-    var turns int
-    var count = inCount
+func countingBroker(stopBrokerCh <-chan bool) {
+    var completedTurns int
+    var cellsCount = 0
     for {
         select {
-            case <-setTurnsCh:
-                turns++
-            case getTurnsCh <- turns:
-            case dif := <-setCountCh:
-                count += dif
-            case getCountCh <-count:
+            case <- setCompletedTurnsCh:
+                completedTurns++
+            case getCompletedTurnsCh <- completedTurns:
+            case newCount := <- setCellsCountCh:
+                cellsCount = newCount
+            case getCellsCountCh <- cellsCount:
+            case <- stopBrokerCh:
+                return
+        }
+    }
+}
+
+func reportAlive(stopReporterCh <-chan bool, c distributorChannels) {
+    ticker := time.NewTicker(2 * time.Second)
+
+    for {
+        select {
+            case <-ticker.C:
+                completedTurns := <- getCompletedTurnsCh
+                cellsCount := <- getCellsCountCh
+                c.events <- AliveCellsCount{
+                    CompletedTurns: completedTurns,
+                    CellsCount: cellsCount,
+                }
+            case <- stopReporterCh:
+                ticker.Stop();
+                return
         }
     }
 }
@@ -65,6 +79,24 @@ func newField(height, width int) [][]uint8 {
         field[i] = make([]uint8, width)
     };
     return field
+}
+
+func (world *World) saveWorld(turn int, c distributorChannels) {
+    filename := strconv.Itoa(world.width) + "x" + strconv.Itoa(world.height) + "x" + strconv.Itoa(turn)
+
+    c.ioCommand <- ioOutput
+    c.ioFilename <- filename
+
+    for y := 0; y < world.height; y++ {
+        for x := 0; x < world.width; x++ {
+            c.ioOutput <- world.field[y][x]
+        }
+    };
+
+    c.events <- ImageOutputComplete{
+        CompletedTurns: turn,
+        Filename: filename,
+    }
 }
 
 func (world *World) getAlive() []util.Cell {
@@ -79,19 +111,106 @@ func (world *World) getAlive() []util.Cell {
     return alive
 }
 
-func newSteps(height, threads int) []Step {
-    steps := []Step{};
-    h := height
-    t := threads
-    start := 0
-    for start < height {
-        step := h/t
-        steps = append(steps, Step{start: start, end: start + step})
-        h = h - step
-        t = t - 1
-        start = start + step
+func (region *Region) updateRegion(regionCh chan<- [][]uint8, flippedCh chan<- []util.Cell) {
+    field := newField(region.height, region.width)
+    haloOffset := 1
+    flipped := []util.Cell{}
+    for y := haloOffset; y < region.height + haloOffset; y++ {
+        for x := 0; x < region.width; x++ {
+            currentCell := region.field[y][x]
+            nextCell := currentCell
+        	aliveNeighbours := 0;
+            for i := -1; i <= 1; i++ {
+                for j := -1; j <= 1; j++ {
+                    wx := x + i
+                    wy := y + j
+                    wx += region.width
+                    wx %= region.width
+                    if (j != 0 || i != 0) && region.field[wy][wx] == 255 {
+                        aliveNeighbours++
+                    }
+                }
+            }
+            if (aliveNeighbours < 2) || (aliveNeighbours > 3) {
+                nextCell = 0
+        	}
+            if aliveNeighbours == 3 {
+                nextCell = 255
+            }
+            if nextCell != currentCell {
+                flipped = append(flipped, util.Cell{
+                    X: x,
+                    Y: y - haloOffset + region.start,
+                })
+            }
+            field[y-haloOffset][x] = nextCell
+        }
     }
-    return steps
+    regionCh <- field
+    flippedCh <- flipped
+}
+
+func (world *World) makeHalo(w int) Region {
+     field := newField(0, 0)
+
+     regionHeight := world.height/world.threads
+     start := w * regionHeight
+     end := (w + 1) * regionHeight
+     if w == world.threads - 1 {
+         end = world.height
+     }
+     regionHeight = end - start
+
+     downRowPtr := end % world.height
+
+     upRowPtr := start - 1
+     upRowPtr = upRowPtr + world.height
+     upRowPtr = upRowPtr % world.height
+
+     field = append(field, world.field[upRowPtr])
+     for row := start; row < end; row++ {
+        field = append(field, world.field[row])
+     }
+     field = append(field, world.field[downRowPtr])
+
+     return Region{
+         field: field,
+         start: start,
+         end: end,
+         height: regionHeight,
+         width: world.width,
+     }
+}
+
+func (world *World) updateWorld(turn int, c distributorChannels) {
+    var newFieldData [][]uint8
+
+    regionCh := make([]chan [][]uint8, world.threads);
+    for i := range regionCh {
+        regionCh[i] = make(chan [][]uint8)
+    }
+
+    flippedCh := make(chan []util.Cell)
+
+   for w := 0; w < world.threads; w++ {
+       region := world.makeHalo(w)
+       go region.updateRegion(regionCh[w], flippedCh)
+    }
+
+    newFieldData = newField(0, 0);
+    for i := 0; i < world.threads; i++ {
+        region := <-regionCh[i];
+        newFieldData = append(newFieldData, region...)
+        flipped := <-flippedCh
+        for f := range flipped {
+            c.events <- CellFlipped{
+                CompletedTurns: turn,
+                Cell: flipped[f],
+            }
+        }
+    }
+
+    world.field = newFieldData
 }
 
 func loadWorld(height, width, threads int, c distributorChannels) *World {
@@ -109,169 +228,64 @@ func loadWorld(height, width, threads int, c distributorChannels) *World {
             if p == 255 {c.events <- CellFlipped{0, util.Cell{X: x, Y: y}}}
         }
     };
-    steps := newSteps(height, threads);
 
-    return &World{field: field, steps: steps, height: height, width: width, threads: threads, }
-}
-
-func (world *World) updateRegion(start, end int, regionCh chan<- [][]uint8, flippedCh chan<- []util.Cell) {
-    region := newField(end-start, world.width)
-    flipped := []util.Cell{}
-    dif := 0
-    for y := start; y < end; y++ {
-        for x := 0; x < world.width; x++ {
-            currentCell := world.field[y][x]
-            nextCell := currentCell
-        	aliveNeighbours := 0;
-        	for i := -1; i <= 1; i++ {
-        		for j := -1; j <= 1; j++ {
-                    tx := x + i
-                    ty:= y + j
-                    tx += world.width
-                    tx %= world.width
-                    ty += world.height
-                    ty %= world.height
-        			if (j != 0 || i != 0) && world.field[ty][tx] == 255 {
-                        aliveNeighbours++
-        			}
-        		}
-            }
-            if (aliveNeighbours < 2) || (aliveNeighbours > 3) {
-                nextCell = 0
-        	}
-            if aliveNeighbours == 3 {
-                nextCell = 255
-            }
-            if nextCell != currentCell {
-                flipped = append(flipped, util.Cell{x,y})
-                if nextCell == 255 {
-                    dif++
-                } else if nextCell == 0 {
-                    dif--
-                }
-            }
-            region[y-start][x] = nextCell
-        }
-    }
-    regionCh <- region
-    flippedCh <- flipped
-    setCountCh <- dif
-}
-
-func (world *World) updateWorld(turn int, c distributorChannels) {
-    var newFieldData [][]uint8
-
-    regionCh := make([]chan [][]uint8, world.threads);
-    for i := range regionCh {
-        regionCh[i] = make(chan [][]uint8)
-    }
-
-    flippedCh := make(chan []util.Cell)
-
-    for w := 0; w < world.threads; w++ {
-        go world.updateRegion(world.steps[w].start, world.steps[w].end, regionCh[w], flippedCh)
-    }
-
-    newFieldData = newField(0, 0);
-
-    for i := 0; i < world.threads; i++ {
-        region := <-regionCh[i];
-        newFieldData = append(newFieldData, region...)
-    }
-
-    for i := 0; i < world.threads; i++ {
-        flipped := <-flippedCh
-        for i := range flipped {
-            c.events <- CellFlipped{turn, flipped[i]}
-        }
-    }
-
-    world.field = newFieldData
-}
-
-func (world *World) saveWorld(turn int, c distributorChannels) {
-    outFilename := strconv.Itoa(world.width) + "x" + strconv.Itoa(world.height) + "x" + strconv.Itoa(turn)
-
-    c.ioCommand <- ioOutput
-    c.ioFilename <- outFilename
-
-    for y := 0; y < world.height; y++ {
-        for x := 0; x < world.width; x++ {
-            c.ioOutput <- world.field[y][x]
-        }
-    };
-
-    c.events <- ImageOutputComplete{
-        CompletedTurns: turn,
-        Filename: outFilename}
-}
-
-func (world *World) reportAlive(turn int, stopCounterCh <-chan bool, c distributorChannels) {
-    ticker := time.NewTicker(2 * time.Second)
-
-    for {
-        select {
-        case <-ticker.C:
-            turns := <- getTurnsCh
-            count := <- getCountCh
-            c.events <- AliveCellsCount{
-                CompletedTurns: turns,
-                CellsCount: count}
-            case <-stopCounterCh:
-                ticker.Stop();
-                return
-        }
-    }
+    return &World{field: field, height: height, width: width, threads: threads, }
 }
 
 func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChannels) {
     defer wg.Done()
     paused := false
     turn := 0
-
-    stopCounterCh := make(chan bool);
-    go world.reportAlive(turn, stopCounterCh, c);
-
     for turn < turns {
         select {
             case cmd := <- c.keyPresses:
                 switch cmd {
-                    case 's':
-                        world.saveWorld(turn, c)
-                    case 'q':
-                        world.saveWorld(turn, c)
-                        return;
-                    case 'p':
-                        if paused {
-                            c.events <- StateChange{turn, Executing}
-                            fmt.Printf("\nContinuing\n")
-                        } else {
-                            c.events <- StateChange{turn, Paused}
-                            fmt.Printf("\nCurrent turn: %d\n", turn + 1)
-                        };
-                        paused = !paused
-                    default:
-                        paused = false
+                case 's':
+                    world.saveWorld(turn, c)
+                case 'q':
+                    world.saveWorld(turn, c)
+                    return;
+                case 'p':
+                    if paused {
+                        c.events <- StateChange{
+                            CompletedTurns: turn,
+                            NewState: Executing,
+                        }
+                        fmt.Printf("\nContinuing\n")
+                    } else {
+                        c.events <- StateChange{
+                            CompletedTurns: turn,
+                            NewState: Paused,
+                        }
+                        fmt.Printf("\nCurrent turn: %d\n", turn + 1)
+                    }
+                    paused = !paused
+                default:
+                    paused = false
                 }
-            default:
-                if !paused {
-                    world.updateWorld(turn, c);
-                    setTurnsCh <- true
-                    c.events <- TurnComplete{
-                        CompletedTurns: turn}
-                    turn++;
-                }
+                default:
+                    if !paused {
+                        world.updateWorld(turn, c);
+                        setCellsCountCh <- len(world.getAlive())
+                        setCompletedTurnsCh <- true
+                        c.events <- TurnComplete{
+                            CompletedTurns: turn,
+                        }
+                        turn++;
+                    }
         }
     }
-    stopCounterCh<-true
     world.saveWorld(turn, c)
 }
 
 func distributor(p Params, c distributorChannels) {
     world := loadWorld(p.ImageHeight, p.ImageWidth, p.Threads, c)
 
-    inCount := len(world.getAlive())
-    go countingBroker(inCount)
+    var stopReporterCh = make(chan bool)
+    go reportAlive(stopReporterCh, c)
+
+    var stopBrokerCh = make(chan bool)
+    go countingBroker(stopBrokerCh)
 
     var wg sync.WaitGroup
 
@@ -281,17 +295,25 @@ func distributor(p Params, c distributorChannels) {
 
     wg.Wait()
 
-    turns := <- getTurnsCh
+    stopReporterCh <- true
+
+    completedTurns := <- getCompletedTurnsCh
+
+    stopBrokerCh <- true
 
     c.events <- FinalTurnComplete{
-        CompletedTurns: turns,
-        Alive: world.getAlive()}
+        CompletedTurns: completedTurns,
+        Alive: world.getAlive(),
+    }
 
     // Make sure that the Io has finished any output before exiting.
     c.ioCommand <- ioCheckIdle
     <-c.ioIdle;
 
-    c.events <- StateChange{turns, Quitting};
+    c.events <- StateChange{
+        CompletedTurns: completedTurns,
+        NewState: Quitting,
+    }
 
     // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
     close(c.events)

@@ -2,10 +2,11 @@ package gol
 
 import (
     "strconv"
-	"uk.ac.bris.cs/gameoflife/util"
     "sync"
     "fmt"
     "time"
+
+    "uk.ac.bris.cs/gameoflife/util"
 )
 
 type distributorChannels struct {
@@ -35,7 +36,28 @@ type Alive struct {
     count int
 }
 
-var completedTurns = 0;
+var setTurnsCh = make(chan bool)
+
+var getTurnsCh =make(chan int)
+
+var setCountCh = make(chan int)
+
+var getCountCh = make(chan int)
+
+func countingBroker(inCount int) {
+    var turns int
+    var count = inCount
+    for {
+        select {
+            case <-setTurnsCh:
+                turns++
+            case getTurnsCh <- turns:
+            case dif := <-setCountCh:
+                count += dif
+            case getCountCh <-count:
+        }
+    }
+}
 
 func newField(height, width int) [][]uint8 {
     field := make([][]uint8, height)
@@ -43,6 +65,18 @@ func newField(height, width int) [][]uint8 {
         field[i] = make([]uint8, width)
     };
     return field
+}
+
+func (world *World) getAlive() []util.Cell {
+    alive := []util.Cell{}
+    for y := 0; y < world.height; y++ {
+        for x := 0; x < world.width; x++ {
+            if world.field[y][x] == 255 {
+                alive= append(alive, util.Cell{X: x, Y: y})
+            }
+        }
+    }
+    return alive
 }
 
 func newSteps(height, threads int) []Step {
@@ -83,6 +117,7 @@ func loadWorld(height, width, threads int, c distributorChannels) *World {
 func (world *World) updateRegion(start, end int, regionCh chan<- [][]uint8, flippedCh chan<- []util.Cell) {
     region := newField(end-start, world.width)
     flipped := []util.Cell{}
+    dif := 0
     for y := start; y < end; y++ {
         for x := 0; x < world.width; x++ {
             currentCell := world.field[y][x]
@@ -109,12 +144,18 @@ func (world *World) updateRegion(start, end int, regionCh chan<- [][]uint8, flip
             }
             if nextCell != currentCell {
                 flipped = append(flipped, util.Cell{x,y})
+                if nextCell == 255 {
+                    dif++
+                } else if nextCell == 0 {
+                    dif--
+                }
             }
             region[y-start][x] = nextCell
         }
     }
     regionCh <- region
     flippedCh <- flipped
+    setCountCh <- dif
 }
 
 func (world *World) updateWorld(turn int, c distributorChannels) {
@@ -141,45 +182,11 @@ func (world *World) updateWorld(turn int, c distributorChannels) {
     for i := 0; i < world.threads; i++ {
         flipped := <-flippedCh
         for i := range flipped {
-            c.events <- CellFlipped{completedTurns, flipped[i]}
+            c.events <- CellFlipped{turn, flipped[i]}
         }
     }
 
     world.field = newFieldData
-
-    c.events <- TurnComplete{turn}
-
-    completedTurns = turn + 1
-}
-
-func (world *World) getAlive() *Alive {
-    cells := []util.Cell{};
-    count := 0;
-    for y := 0; y < world.height; y++ {
-        for x := 0; x < world.width; x++ {
-            if world.field[y][x] == 255 {
-                cells = append(cells, util.Cell{X: x, Y: y})
-                count++
-            }
-        }
-    }
-
-    return &Alive{cells: cells, count: count}
-}
-
-
-func (world *World) aliveCounter(turn int, stopCounterCh <-chan bool, c distributorChannels) {
-    ticker := time.NewTicker(2 * time.Second)
-
-    for {
-        select {
-        case <-ticker.C:
-            c.events <- AliveCellsCount{completedTurns, world.getAlive().count}
-            case <-stopCounterCh:
-                ticker.Stop();
-                return
-        }
-    }
 }
 
 func (world *World) saveWorld(turn int, c distributorChannels) {
@@ -194,7 +201,27 @@ func (world *World) saveWorld(turn int, c distributorChannels) {
         }
     };
 
-    c.events <- ImageOutputComplete{turn, outFilename}
+    c.events <- ImageOutputComplete{
+        CompletedTurns: turn,
+        Filename: outFilename}
+}
+
+func (world *World) reportAlive(turn int, stopCounterCh <-chan bool, c distributorChannels) {
+    ticker := time.NewTicker(2 * time.Second)
+
+    for {
+        select {
+        case <-ticker.C:
+            turns := <- getTurnsCh
+            count := <- getCountCh
+            c.events <- AliveCellsCount{
+                CompletedTurns: turns,
+                CellsCount: count}
+            case <-stopCounterCh:
+                ticker.Stop();
+                return
+        }
+    }
 }
 
 func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChannels) {
@@ -203,7 +230,7 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
     turn := 0
 
     stopCounterCh := make(chan bool);
-    go world.aliveCounter(turn, stopCounterCh, c);
+    go world.reportAlive(turn, stopCounterCh, c);
 
     for turn < turns {
         select {
@@ -216,11 +243,11 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
                         return;
                     case 'p':
                         if paused {
-                            c.events <- StateChange{completedTurns, Executing}
+                            c.events <- StateChange{turn, Executing}
                             fmt.Printf("\nContinuing\n")
                         } else {
-                            c.events <- StateChange{completedTurns, Paused}
-                            fmt.Printf("\nCurrent turn: %d\n", turn+1)
+                            c.events <- StateChange{turn, Paused}
+                            fmt.Printf("\nCurrent turn: %d\n", turn + 1)
                         };
                         paused = !paused
                     default:
@@ -229,6 +256,9 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
             default:
                 if !paused {
                     world.updateWorld(turn, c);
+                    setTurnsCh <- true
+                    c.events <- TurnComplete{
+                        CompletedTurns: turn}
                     turn++;
                 }
         }
@@ -240,6 +270,9 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
 func distributor(p Params, c distributorChannels) {
     world := loadWorld(p.ImageHeight, p.ImageWidth, p.Threads, c)
 
+    inCount := len(world.getAlive())
+    go countingBroker(inCount)
+
     var wg sync.WaitGroup
 
     wg.Add(1);
@@ -248,13 +281,17 @@ func distributor(p Params, c distributorChannels) {
 
     wg.Wait()
 
-    c.events <- FinalTurnComplete{completedTurns, world.getAlive().cells}
+    turns := <- getTurnsCh
+
+    c.events <- FinalTurnComplete{
+        CompletedTurns: turns,
+        Alive: world.getAlive()}
 
     // Make sure that the Io has finished any output before exiting.
     c.ioCommand <- ioCheckIdle
     <-c.ioIdle;
 
-    c.events <- StateChange{completedTurns, Quitting};
+    c.events <- StateChange{turns, Quitting};
 
     // Close the channel to stop the SDL goroutine gracefully. Removing may cause deadlock.
     close(c.events)

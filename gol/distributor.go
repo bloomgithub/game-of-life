@@ -19,13 +19,7 @@ type distributorChannels struct {
     keyPresses <-chan rune
 }
 
-var setCompletedTurnsCh = make(chan bool)
-
-var getCompletedTurnsCh = make(chan int)
-
-var setCellsCountCh = make(chan int)
-
-var getCellsCountCh = make(chan int)
+var b = NewBroker()
 
 type World struct {
 	field [][]uint8
@@ -37,21 +31,68 @@ type Region struct {
     start, end, height, width int
 }
 
-func countingBroker(stopBrokerCh <-chan bool) {
-    var completedTurns int
+type Broker struct {
+    stopCh                  chan bool
+    setCompletedTurnsCh     chan bool
+    getCompletedTurnsCh     chan int
+    resetCompletedTurnsCh   chan bool
+    setCellsCountCh         chan int
+    getCellsCountCh         chan int}
+
+func NewBroker() *Broker {
+    return &Broker{
+        stopCh:                 make(chan bool),
+        setCompletedTurnsCh:    make(chan bool),
+        getCompletedTurnsCh:    make(chan int),
+        resetCompletedTurnsCh:  make(chan bool),
+        setCellsCountCh:        make(chan int),
+        getCellsCountCh:        make(chan int),
+    }
+}
+
+func (b *Broker) Start() {
+    var completedTurns = 0
     var cellsCount = 0
     for {
         select {
-            case <- setCompletedTurnsCh:
+        case <-b.stopCh:
+            return
+            case <- b.setCompletedTurnsCh:
                 completedTurns++
-            case getCompletedTurnsCh <- completedTurns:
-            case newCount := <- setCellsCountCh:
-                cellsCount = newCount
-            case getCellsCountCh <- cellsCount:
-            case <- stopBrokerCh:
-                return
-        }
+                case b.getCompletedTurnsCh <- completedTurns:
+        case  <- b.resetCompletedTurnsCh:
+            completedTurns = 0
+                    case newCount := <- b.setCellsCountCh:
+                        cellsCount = newCount
+                        case b.getCellsCountCh <- cellsCount:
+                            }
     }
+}
+
+func (b *Broker) Stop() {
+    b.stopCh <- true
+}
+
+func (b *Broker) GetCompletedTurns() int {
+    c := <- b.getCompletedTurnsCh
+    return c
+}
+
+func (b *Broker) SetCompletedTurns() {
+    b.setCompletedTurnsCh <- true
+}
+
+func (b *Broker) ResetCompletedTurns() {
+    b.resetCompletedTurnsCh <- true
+}
+
+func (b *Broker) GetCellsCount() int {
+    c := <- b.getCellsCountCh
+    return c
+}
+
+func (b *Broker) SetCellsCount(cellsCount int) {
+    b.setCellsCountCh <- cellsCount
 }
 
 func newField(height, width int) [][]uint8 {
@@ -219,8 +260,9 @@ func reportAlive(stopReporterCh <-chan bool, c distributorChannels) {
     for {
         select {
             case <-ticker.C:
-                completedTurns := <- getCompletedTurnsCh
-                cellsCount := <- getCellsCountCh
+
+                completedTurns := b.GetCompletedTurns()
+                cellsCount := b.GetCellsCount()
                 c.events <- AliveCellsCount{
                     CompletedTurns: completedTurns,
                     CellsCount: cellsCount,
@@ -266,8 +308,8 @@ func (world *World) liveWorld(turns int, wg *sync.WaitGroup, c distributorChanne
                 default:
                     if !paused {
                         world.updateWorld(turn, c);
-                        setCellsCountCh <- len(world.getAlive())
-                        setCompletedTurnsCh <- true
+                        b.SetCellsCount(len(world.getAlive()))
+                        b.SetCompletedTurns()
                         c.events <- TurnComplete{
                             CompletedTurns: turn,
                         }
@@ -283,8 +325,7 @@ func distributor(p Params, c distributorChannels) {
     var stopReporterCh = make(chan bool)
     go reportAlive(stopReporterCh, c)
 
-    var stopBrokerCh = make(chan bool)
-    go countingBroker(stopBrokerCh)
+    go b.Start()
 
     var wg sync.WaitGroup
 
@@ -296,9 +337,9 @@ func distributor(p Params, c distributorChannels) {
 
     stopReporterCh <- true
 
-    completedTurns := <- getCompletedTurnsCh
+    completedTurns := b.GetCompletedTurns()
 
-    stopBrokerCh <- true
+    b.Stop()
 
     c.events <- FinalTurnComplete{
         CompletedTurns: completedTurns,

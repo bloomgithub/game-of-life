@@ -16,7 +16,7 @@ type distributorChannels struct {
 	ioFilename chan<- string
 	ioOutput   chan<- uint8
 	ioInput    <-chan uint8
-    keyPresses <-chan rune
+    	keyPresses <-chan rune
 }
 
 var b = NewBroker()

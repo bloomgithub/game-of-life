@@ -55,17 +55,17 @@ func (b *Broker) Start() {
     var cellsCount = 0
     for {
         select {
-        case <-b.stopCh:
-            return
-            case <- b.setCompletedTurnsCh:
-                completedTurns++
-                case b.getCompletedTurnsCh <- completedTurns:
-        case  <- b.resetCompletedTurnsCh:
-            completedTurns = 0
-                    case newCount := <- b.setCellsCountCh:
-                        cellsCount = newCount
-                        case b.getCellsCountCh <- cellsCount:
-                            }
+        	case <-b.stopCh:
+    			return
+    		case <- b.setCompletedTurnsCh:
+			completedTurns++
+		case b.getCompletedTurnsCh <- completedTurns:
+		case  <- b.resetCompletedTurnsCh:
+			completedTurns = 0
+		case newCount := <- b.setCellsCountCh:
+			cellsCount = newCount
+		case b.getCellsCountCh <- cellsCount:
+	}
     }
 }
 

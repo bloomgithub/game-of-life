@@ -37,7 +37,8 @@ type Broker struct {
     getCompletedTurnsCh     chan int
     resetCompletedTurnsCh   chan bool
     setCellsCountCh         chan int
-    getCellsCountCh         chan int}
+    getCellsCountCh         chan int
+}
 
 func NewBroker() *Broker {
     return &Broker{
